@@ -6,7 +6,7 @@ st.title("Planta de Inferencia LLM en Lazo Abierto")
 st.subheader("Teoría de Control - UTN | Boldrini Lucas y Bru Nicolás")
 
 st.markdown("""
-**Objetivo de esta primera iteración (Fases 1 y 2):** 
+**Objetivo:** 
 Verificar en **Lazo Abierto** cómo responde nuestra **Variable Controlada** (Latencia en ms) 
 cuando modificamos manualmente nuestra **Variable Manipulada** (Límite de CPU en Docker).
 """)
