@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import random
 
-st.title("Avance 1: Planta de Inferencia LLM en Lazo Abierto")
+st.title("Planta de Inferencia LLM en Lazo Abierto")
 st.subheader("Teoría de Control - UTN | Boldrini Lucas y Bru Nicolás")
 
 st.markdown("""
