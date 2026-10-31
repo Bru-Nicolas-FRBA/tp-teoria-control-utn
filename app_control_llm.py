@@ -1,228 +1,278 @@
 import streamlit as st
 import pandas as pd
-import random
-import math
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import time
 
 st.set_page_config(page_title="TP Teoría de Control - UTN", layout="wide")
 
-# --- MENÚ LATERAL PARA NAVEGAR LA EVOLUCIÓN DEL TP ---
-st.sidebar.title("📂 Evolución del TP")
+# --- INICIALIZACIÓN DEL ESTADO DE LA SIMULACIÓN EN TIEMPO REAL ---
+if "running" not in st.session_state:
+    st.session_state.running = False
+if "step" not in st.session_state:
+    st.session_state.step = 0
+if "perturb_remaining" not in st.session_state:
+    st.session_state.perturb_remaining = 0
+if "integral_error" not in st.session_state:
+    st.session_state.integral_error = 0.0
+if "prev_error" not in st.session_state:
+    st.session_state.prev_error = 0.0
+if "current_y" not in st.session_state:
+    st.session_state.current_y = 200.0
+if "history" not in st.session_state:
+    st.session_state.history = []
+
+# --- BARRA LATERAL: NAVEGACIÓN Y TABLERO DE CONTROL ---
+st.sidebar.title("🎛️ Tablero de Control")
+st.sidebar.markdown("**Autores:** Boldrini Lucas y Bru Nicolás\n\n**Cátedra:** Teoría de Control - UTN")
+
 pagina = st.sidebar.radio(
-    "Seleccionar Entrega / Avance:",
+    "Navegación del Proyecto:",
     [
-        "🟢 Semana 1: Instrumentación y Lazo Abierto",
-        "🟡 Semana 2: Identificación (Ensayo Escalón)",
-        "🟠 Semana 3: Diseño PID y Lazo Cerrado (Próximo)"
+        "🟢 1. Simulador en Tiempo Real y QoS",
+        "🌐 2. Análisis del Modelo IoT",
+        "🟠 3. Semana 3: Implementación Física (Próximo)"
     ]
 )
 
+st.sidebar.divider()
+
+# Controles del Tablero (visibles para configurar la simulación)
+st.sidebar.subheader("1. Referencia y QoS (SLA)")
+ref_val = st.sidebar.slider("Valor de Referencia / Setpoint (ms)", 100, 500, 200, step=10)
+qos_max = st.sidebar.slider("Umbral Falla QoS / Latencia Máx (ms)", 250, 800, 350, step=10)
+
+st.sidebar.subheader("2. Configurar Perturbación")
+pert_amp = st.sidebar.slider("Amplitud de Perturbación (+ms carga)", 50, 400, 180, step=10)
+pert_dur = st.sidebar.slider("Duración de Perturbación (ciclos)", 3, 30, 10, step=1)
+
+st.sidebar.subheader("3. Constantes de Control (Kp, Ki, Kv)")
+modo_lazo = st.sidebar.selectbox("Modo del Sistema:", ["Lazo Cerrado (Con Corrección)", "Lazo Abierto (Sin Corrección - Se desequilibra)"])
+kp = st.sidebar.slider("Constante Proporcional (Kp)", 0.000, 0.030, 0.008, step=0.001, format="%.3f")
+ki = st.sidebar.slider("Constante Integral (Ki)", 0.000, 0.015, 0.003, step=0.001, format="%.3f")
+kv = st.sidebar.slider("Constante Kv / Derivativa ( velocidad )", 0.000, 0.020, 0.004, step=0.001, format="%.3f")
+
+
 # ==============================================================================
-# PÁGINA 1: SEMANA 1 (LAZO ABIERTO MANUAL)
+# PÁGINA 1: SIMULACIÓN EN TIEMPO REAL, SEÑALES APILADAS Y QoS
 # ==============================================================================
-if pagina == "🟢 Semana 1: Instrumentación y Lazo Abierto":
-    st.title("🟢 Avance 1: Planta de Inferencia LLM en Lazo Abierto")
-   
+if pagina == "🟢 1. Simulador en Tiempo Real y QoS":
+    st.title("🟢 Simulación en Tiempo Real del Sistema de Control y QoS")
     st.markdown("""
-    **Objetivo (Fases 1 y 2):** 
-    Verificar en **Lazo Abierto** cómo responde nuestra **Variable Controlada** (Latencia en ms) 
-    cuando modificamos manualmente nuestra **Variable Manipulada** (Límite de CPU en Docker).
+    El sistema inicia en **condiciones de normalidad** siguiendo el Valor de Referencia. 
+    En cualquier momento puedes **inyectar una perturbación** para observar cómo se desequilibra, cuándo cruza el umbral de **Falla de QoS** y cómo corrige según los valores de **$K_p, K_i$ y $K_v$**.
     """)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("### 🎛️ Actuador (Docker API)")
-        cpu_cores = st.slider("Límite de CPU asignado (--cpus)", min_value=0.5, max_value=4.0, value=2.0, step=0.5)
+    # --- BOTONERA DE EJECUCIÓN EN LÍNEA ---
+    c_btn1, c_btn2, c_btn3, c_btn4 = st.columns(4)
+    with c_btn1:
+        if st.button("▶️ Iniciar / Correr en línea", type="primary", use_container_width=True):
+            st.session_state.running = True
+    with c_btn2:
+        if st.button("⏸️ Detener Simulación", use_container_width=True):
+            st.session_state.running = False
+    with c_btn3:
+        if st.button("⚡ Generar Perturbación Ahora", use_container_width=True):
+            st.session_state.perturb_remaining = pert_dur
+            st.session_state.running = True
+    with c_btn4:
+        if st.button("🔄 Reiniciar Todo", use_container_width=True):
+            st.session_state.running = False
+            st.session_state.step = 0
+            st.session_state.perturb_remaining = 0
+            st.session_state.integral_error = 0.0
+            st.session_state.prev_error = 0.0
+            st.session_state.current_y = float(ref_val)
+            st.session_state.history = []
+            st.rerun()
 
-    with col2:
-        st.markdown("### ⚡ Entrada / Perturbación")
-        tokens_prompt = st.slider("Longitud del Prompt (Tokens)", min_value=100, max_value=1000, value=300, step=100)
+    # --- FUNCIÓN QUE AVANZA UN CICLO DE RELOJ ---
+    def avanzar_un_paso():
+        st.session_state.step += 1
+        t = st.session_state.step
 
-    if "mediciones" not in st.session_state:
-        st.session_state.mediciones = []
+        # 1. Evaluar si hay perturbación activa en este instante
+        if st.session_state.perturb_remaining > 0:
+            z_t = float(pert_amp)
+            st.session_state.perturb_remaining -= 1
+        else:
+            z_t = 0.0
 
-    col_btn1, col_btn2 = st.columns([1, 4])
-    with col_btn1:
-        if st.button("Enviar Prompt y Medir Latencia (Sensor)"):
-            latencia_base = (tokens_prompt / cpu_cores) * 1.2
-            ruido = random.uniform(-10, 10)
-            latencia_medida = round(latencia_base + ruido, 1)
+        # 2. Medición actual (Sensor simulado) y cálculo del Error
+        y_actual = st.session_state.current_y
+        error = ref_val - y_actual
+
+        # 3. Cálculo del Controlador en base a Kp, Ki y Kv
+        if modo_lazo == "Lazo Cerrado (Con Corrección)":
+            st.session_state.integral_error = np.clip(st.session_state.integral_error + error, -600.0, 600.0)
+            velocidad_error = error - st.session_state.prev_error
             
-            st.session_state.mediciones.append({
-                "CPU_Asignada": cpu_cores,
-                "Tokens_Prompt": tokens_prompt,
-                "Latencia_ms": latencia_medida
-            })
-    with col_btn2:
-        if st.button("Borrar mediciones"):
-            st.session_state.mediciones = []
+            # Como +CPU baja la latencia, un error negativo (latencia alta) requiere subir CPU
+            accion_control = -(kp * error + ki * st.session_state.integral_error + kv * velocidad_error)
+            u_cpu = float(np.clip(2.0 + accion_control, 0.5, 4.0))
+            st.session_state.prev_error = error
+        else:
+            # En Lazo Abierto la entrada U(t) queda fija y el sistema no corrige
+            u_cpu = 2.0
 
-    if len(st.session_state.mediciones) > 0:
-        df = pd.DataFrame(st.session_state.mediciones)
-        ultima_latencia = df.iloc[-1]["Latencia_ms"]
-        
-        st.metric(label="⏱️ Última Latencia Medida (Variable Controlada)", value=f"{ultima_latencia} ms")
-        st.markdown("#### Gráfico en tiempo real (Muestras vs Latencia en ms)")
-        st.line_chart(df["Latencia_ms"])
-        st.markdown("#### Tabla de Registro del Sensor")
-        st.dataframe(df)
+        # 4. Respuesta de la Planta (Modelo de primer orden + impacto de perturbación)
+        # En condiciones normales (CPU=2.0 y sin perturbación), la planta tiende a ref_val
+        latencia_objetivo_planta = ref_val * (2.0 / u_cpu) + z_t
+        inercia = 0.35
+        ruido = np.random.normal(0, 2.5)
+        nueva_y = (1 - inercia) * y_actual + inercia * latencia_objetivo_planta + ruido
+        st.session_state.current_y = max(30.0, nueva_y)
+
+        # 5. Evaluar QoS (Calidad de Servicio)
+        en_falla_qos = st.session_state.current_y > qos_max
+
+        # 6. Guardar todas las señales
+        st.session_state.history.append({
+            "Tiempo": t,
+            "Referencia": ref_val,
+            "Umbral_QoS": qos_max,
+            "Valor_Medido": round(st.session_state.current_y, 1),
+            "Perturbacion": z_t,
+            "Error": round(error, 1),
+            "Entrada_CPU": round(u_cpu, 2),
+            "Falla_QoS": en_falla_qos
+        })
+        # Mantener ventana de los últimos 80 segundos en pantalla
+        if len(st.session_state.history) > 80:
+            st.session_state.history.pop(0)
+
+    # Sembrar 5 puntos iniciales de normalidad si recién se abre la app
+    if len(st.session_state.history) == 0:
+        st.session_state.current_y = float(ref_val)
+        for _ in range(5):
+            avanzar_un_paso()
+
+    # --- INDICADORES SUPERIORES DE ESTADO Y QoS ---
+    ultimo = st.session_state.history[-1]
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("Valor Medido Y(t)", f"{ultimo['Valor_Medido']} ms", f"{round(ultimo['Valor_Medido'] - ref_val, 1)} ms vs Ref", delta_color="inverse")
+    k2.metric("Perturbación Activa Z(t)", f"+{ultimo['Perturbacion']} ms", f"Restan {st.session_state.perturb_remaining} s" if st.session_state.perturb_remaining > 0 else "Normalidad")
+    k3.metric("Entrada Actuador U(t)", f"{ultimo['Entrada_CPU']} CPUs", "Docker --cpus")
+    
+    # cálculo de constantes de error teóricas para mostrar en pantalla
+    k_estatica_lazo = round((kp * 100) + (ki * 200), 2)
+    k4.metric("Constantes Activas", f"Kp:{kp} | Ki:{ki} | Kv:{kv}", f"Ganancia Dinámica: {k_estatica_lazo}")
+
+    if ultimo["Falla_QoS"]:
+        k5.error(f"🚨 **FALLA DE QoS (SLA VIOLADO)**\nLatencia > {qos_max} ms")
+    elif ultimo["Perturbacion"] > 0:
+        k5.warning("⚠️ **SISTEMA PERTURBADO**\nCorrigiendo dentro de QoS")
     else:
-        st.info("Presiona el botón 'Enviar Prompt y Medir Latencia' para tomar la primera muestra del sensor.")
+        k5.success("✅ **QoS NORMAL (OK)**\nSistema en Equilibrio")
 
+    # --- TODAS LAS SEÑALES DEL SISTEMA (UNA DEBAJO DE LA OTRA) ---
+    df = pd.DataFrame(st.session_state.history)
 
-# ==============================================================================
-# PÁGINA 2: SEMANA 2 (ENSAYO ESCALÓN AUTOMÁTICO EN VIVO)
-# ==============================================================================
-elif pagina == "🟡 Semana 2: Identificación (Ensayo Escalón)":
-    st.title("🟡 Avance 2: Identificación del Sistema (Ensayo de Entrada Escalón)")
-    
-    st.markdown("""
-    **Objetivo (Fase 3 - Modelado de Caja Negra):** 
-    Aplicar automáticamente una **Entrada Escalón** reduciendo de golpe el límite de CPU del **100% (2.0 Cores) al 50% (1.0 Core)** en $t = 5\\text{ s}$ mientras se inyectan peticiones constantes. 
-    Analizamos la curva de reacción para obtener la **Ganancia Estática ($K$)** y la **Constante de Tiempo ($\\tau$ al 63.2%)** de nuestra Función de Transferencia empírica:
-    
-    $$G(s) = \\frac{K}{\\tau s + 1}$$
-    """)
-
-    # Parámetros del ensayo escalón
-    tokens_fijos = 300
-    cpu_inicial = 2.0
-    cpu_final = 1.0
-    t_escalon = 5
-    tau_planta = 3.0
-    lat_inicial = (tokens_fijos / cpu_inicial) * 1.2  # 180 ms
-    lat_final = (tokens_fijos / cpu_final) * 1.2      # 360 ms
-    delta_y = lat_final - lat_inicial                 # +180 ms
-    delta_u = cpu_final - cpu_inicial                 # -1.0 Core
-    k_ganancia = delta_y / delta_u                    # -180 ms/Core
-    latencia_al_632 = lat_inicial + 0.632 * delta_y   # 293.8 ms
-
-    # --- 1. MÉTRICAS IDENTIFICADAS SIEMPRE VISIBLES ---
-    st.markdown("### 📐 Parámetros Identificados de la Planta")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Salto de Entrada (ΔU)", f"{delta_u} Cores", "De 2.0 a 1.0 (50%)")
-    c2.metric("Salto de Salida (ΔY)", f"+{delta_y} ms", "De 180 a 360 ms")
-    c3.metric("Ganancia Estática (K)", f"{k_ganancia} ms/Core", "K = ΔY / ΔU")
-    c4.metric("Constante de Tiempo (τ)", f"{tau_planta} s", f"Al 63.2% ({latencia_al_632:.1f} ms)")
-
-    st.success(
-        f"**Función de Transferencia Empírica Obtenida:**  "
-        f"$$G(s) = \\frac{{{k_ganancia}}}{{{tau_planta}s + 1}}$$  "
-        f"*(Tiempo de establecimiento estimado $4\\tau = {4*tau_planta}\\text{{ s}}$)*"
+    fig = make_subplots(
+        rows=4, cols=1, shared_xaxes=True,
+        vertical_spacing=0.06,
+        subplot_titles=(
+            "1. Salida Medida Y(t), Valor de Referencia R(t) y Límite de Falla QoS (ms)",
+            "2. Señal de Perturbación Z(t) - Sobrecarga Inyectada (ms)",
+            "3. Señal de Error E(t) = Referencia - Valor Medido (ms)",
+            "4. Señal de Entrada a la Planta / Actuador U(t) - CPUs Asignadas (Cores)"
+        )
     )
 
-    # --- 2. CONTENEDORES PARA ANIMACIÓN AUTOMÁTICA ---
-    st.markdown("#### 📈 Curva de Reacción en Vivo: Latencia Medida vs. Modelo de 1er Orden (ms)")
-    espacio_grafico_latencia = st.empty()
+    # 1. Salida, Referencia y QoS
+    fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Referencia"], name="Valor de Referencia R(t)", line=dict(color="#2ecc71", dash="dash", width=2)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Umbral_QoS"], name="Límite Falla QoS", line=dict(color="#e74c3c", dash="dot", width=2)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Valor_Medido"], name="Valor Medido Y(t)", line=dict(color="#2980b9", width=3), mode="lines+markers"), row=1, col=1)
 
-    st.markdown("#### 🎛️ Escalón Aplicado en el Actuador: Límite de CPU (Cores)")
-    espacio_grafico_cpu = st.empty()
+    # Marcar puntos donde se rompe el QoS en rojo fuerte
+    df_fallas = df[df["Falla_QoS"] == True]
+    if len(df_fallas) > 0:
+        fig.add_trace(go.Scatter(x=df_fallas["Tiempo"], y=df_fallas["Valor_Medido"], name="Falla QoS", mode="markers", marker=dict(color="red", size=10, symbol="x")), row=1, col=1)
 
-    # Si todavía no se ejecutó o si queremos que se anime solo al entrar
-    if "escalon_completado" not in st.session_state:
-        st.session_state.escalon_completado = False
-        st.session_state.datos_escalon = []
+    # 2. Perturbación
+    fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Perturbacion"], name="Perturbación Z(t)", line=dict(color="#e67e22", width=2.5, shape="hv"), fill="tozeroy"), row=2, col=1)
 
-    if st.button("🔄 Repetir Animación en Vivo"):
-        st.session_state.escalon_completado = False
-        st.session_state.datos_escalon = []
+    # 3. Error
+    fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Error"], name="Error E(t)", line=dict(color="#9b59b6", width=2)), row=3, col=1)
+    fig.add_hline(y=0, line_dash="dash", line_color="gray", row=3, col=1)
 
-    # Ejecución automática punto a punto al abrir la pestaña
-    if not st.session_state.escalon_completado:
-        random.seed(42)
-        registros_temp = []
-        for t in range(26):
-            if t < t_escalon:
-                cpu_actual = cpu_inicial
-                lat_teorica = lat_inicial
-            else:
-                cpu_actual = cpu_final
-                tiempo_desde_escalon = t - t_escalon
-                lat_teorica = lat_inicial + delta_y * (1 - math.exp(-tiempo_desde_escalon / tau_planta))
-            
-            ruido_sensor = random.uniform(-3.0, 3.0)
-            registros_temp.append({
-                "Tiempo_s": t,
-                "CPU_Cores": cpu_actual,
-                "Latencia_Modelo_1er_Orden_ms": round(lat_teorica, 1),
-                "Latencia_Sensor_ms": round(lat_teorica + ruido_sensor, 1)
-            })
-            df_parcial = pd.DataFrame(registros_temp).set_index("Tiempo_s")
-            espacio_grafico_latencia.line_chart(df_parcial[["Latencia_Sensor_ms", "Latencia_Modelo_1er_Orden_ms"]])
-            espacio_grafico_cpu.line_chart(df_parcial[["CPU_Cores"]])
-            time.sleep(0.12)  # Velocidad de la animación automática
+    # 4. Entrada Actuador (CPU)
+    fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Entrada_CPU"], name="Entrada Planta U(t)", line=dict(color="#16a085", width=2.5, shape="hv"), fill="tozeroy"), row=4, col=1)
 
-        st.session_state.datos_escalon = registros_temp
-        st.session_state.escalon_completado = True
+    fig.update_layout(height=780, margin=dict(l=20, r=20, t=40, b=20), showlegend=True)
+    fig.update_xaxes(title_text="Tiempo en línea (ciclos)", row=4, col=1)
+    
+    st.plotly_chart(fig, use_container_width=True)
 
-    # Mostrar gráficos fijos una vez terminada la animación inicial
-    df_esc = pd.DataFrame(st.session_state.datos_escalon)
-    espacio_grafico_latencia.line_chart(df_esc.set_index("Tiempo_s")[["Latencia_Sensor_ms", "Latencia_Modelo_1er_Orden_ms"]])
-    espacio_grafico_cpu.line_chart(df_esc.set_index("Tiempo_s")[["CPU_Cores"]])
-
-    # --- 3. DESCARGA DE CSV Y TABLA ---
-    col_csv, col_tabla = st.columns([1, 2])
-    with col_csv:
-        st.markdown("#### 💾 Exportar Datos")
-        st.write("Descarga el registro del ensayo para procesarlo en Google Colab o MATLAB:")
-        csv_bytes = df_esc.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label="📥 Descargar ensayo_escalon.csv",
-            data=csv_bytes,
-            file_name="ensayo_escalon.csv",
-            mime="text/csv"
-        )
-    with col_tabla:
-        st.markdown("#### 📋 Tabla de Datos Registrados (Tiempo vs Latencia)")
-        st.dataframe(df_esc, height=220)
+    # Bucle de refresco automático si está "Corriendo en línea"
+    if st.session_state.running:
+        time.sleep(0.4)
+        avanzar_un_paso()
+        st.rerun()
 
 
 # ==============================================================================
-# PÁGINA 3: SEMANA 3 (HOJA DE RUTA DE LO QUE VAMOS A HACER)
+# PÁGINA 2: ANÁLISIS DEL MODELO IoT (PREGUNTA DE VICKI / CÁTEDRA)
 # ==============================================================================
-elif pagina == "🟠 Semana 3: Diseño PID y Lazo Cerrado (Próximo)":
-    st.title("🟠 Avance 3 (Próxima Etapa): Controlador PID Discreto y Cierre de Lazo")
-   
-    st.info("🚧 **Estado:** En desarrollo para la próxima iteración (Fases 4 y 5 del Plan de Acción).")
+elif pagina == "🌐 2. Análisis del Modelo IoT":
+    st.title("🌐 Análisis Arquitectónico: ¿Responde el Sistema al Modelo IoT?")
+    st.subheader("Fundamentación Teórica y Propuesta de Incorporación")
 
-    st.markdown("""
-    ### 🎯 ¿Qué vamos a implementar en esta etapa?
-    Una vez identificada la Función de Transferencia empírica de nuestra planta en la Semana 2 ($G(s) = \\frac{-180}{3.0s + 1}$), cerraremos el lazo de control realimentando la medición del sensor para ajustar automáticamente los núcleos de CPU de Docker frente a perturbaciones.
+    st.warning("""
+    **Respuesta Directa para la Defensa:**  
+    En su estado actual de simulación local (monolítico en una sola PC), el sistema **NO responde estrictamente a un modelo IoT (Internet of Things)** completo, sino a un **sistema de control local cerrado (Loopback / Host-based Control)**. Sin embargo, posee la estructura modular exacta para transformarse en una arquitectura IoT / IIoT incorporando tres capas específicas.
     """)
 
-    col_plan1, col_plan2 = st.columns(2)
+    col_iot1, col_iot2 = st.columns(2)
 
-    with col_plan1:
+    with col_iot1:
         st.markdown("""
-        #### 1. Nodo Comparador y Señal de Error
-        Incorporaremos un **Setpoint (Valor de Referencia)** deseado (ej. `200 ms` de latencia TTFT). En cada ciclo de muestreo calcularemos el error instantáneo:
-        $$E(t) = Setpoint - Latencia\\_Actual$$
-        
-        #### 2. Ley de Control: Ecuación de Diferencias del PID Discreto
-        Programaremos en Python las tres acciones correctivas sobre el contenedor:
-        * **Acción Proporcional ($P$):** Reacciona de forma inmediata al error actual.
-          $$P(t) = K_p \\cdot E(t)$$
-        * **Acción Integral ($I$):** Acumula los errores pasados para eliminar el error en estado estacionario ($e_{ss} = 0$, pasando el sistema a **Tipo 1**).
-          $$I(t) = K_i \\sum E(t) \\cdot \\Delta t$$
-        * **Acción Derivativa ($D$):** Anticipa picos bruscos en la tendencia de la latencia para amortiguar oscilaciones.
-          $$D(t) = K_d \\frac{E(t) - E(t-1)}{\\Delta t}$$
+        ### 1. ¿Por qué hoy NO es un modelo IoT puro?
+        Para que un sistema de control clasifique dentro del paradigma **IoT (o IIoT - Industrial IoT)** según la cátedra, debe cumplir con:
+        1. **Distribución Física y Sensado Remoto:** Los sensores y actuadores deben ser nodos distribuidos o dispositivos de borde (*Edge Devices*) separados físicamente del cerebro central. Hoy el script de Python y el contenedor conviven en el mismo *localhost*.
+        2. **Protocolos de Telemetría Ligera (M2M):** La transmisión de la Variable Controlada y la Señal de Control en IoT se realiza mediante protocolos orientados a eventos como **MQTT, CoAP o WebSockets**, y no mediante llamadas locales de sistema operativo.
+        3. **Identificación Única y Gestión en la Nube:** Cada nodo sensor/actuador debe tener direccionamiento propio y reportar a un *Broker* o plataforma centralizada de monitoreo.
         """)
 
-    with col_plan2:
+    with col_iot2:
         st.markdown("""
-        #### 3. Diagrama en Bloques del Lazo Cerrado a Implementar
-        ```text
-        Setpoint (ms)     Error E(t)   +-----------------+  CPU (--cpus) +------------------+
-        ---------------->(( + / - ))-->| Controlador PID |-------------->| Planta LLM       |---> Latencia
-                             ^         | (Kp, Ki, Kd)    |               | (Contenedor)     |     Real (ms)
-                             |         +-----------------+               +------------------+         |
-                             |                                                                        |
-                             |                     +----------------------------+                     |
-                             +---------------------| Sensor Python (time / API) |<--------------------+
-                                                   +----------------------------+
-        ```
-        
-        #### 4. Pruebas de Perturbación y Sintonización (Tuning)
-        * **Sintonización inicial:** Obtendremos los valores base de $K_p, K_i, K_d$ en Google Colab / MATLAB usando *Ziegler-Nichols* sobre el CSV exportado en la Semana 2.
-        * **Inyección de Perturbaciones:** Simularemos ráfagas de tráfico concurrente y prompts de longitud variable para demostrar cómo el controlador sube automáticamente la cuota de CPU y estabiliza la latencia en el Setpoint.
+        ### 2. ¿Qué hay que incorporar para que SÍ responda al Modelo IoT?
+        Para evolucionar nuestra planta de IA hacia un **Sistema de Control Basado en Red (NCS) bajo arquitectura IoT**, proponemos incorporar:
+        * **A. Separación en Nodos Físicos (Edge + Cloud):** Incorporar una **Raspberry Pi o segunda PC** en la red local que opere como nodo de borde (*Edge Node* / Sondas de medición y generador de tráfico), separada del Servidor donde corre la Planta LLM.
+        * **B. Broker de Mensajería MQTT (Capa de Comunicación IoT):** Incorporar un broker **Mosquitto (MQTT)** entre los bloques del lazo de control:
+          * El **Sensor** publica la telemetría en el tópico `utn/tdc/planta_llm/latencia_ttft`.
+          * El **Controlador PID** (alojado en la nube o en otro nodo) se suscribe a ese tópico, calcula la ley de control en función de $K_p, K_i, K_v$ y publica el comando en `utn/tdc/actuador_docker/cpu_limit`.
+        * **C. Agente Actuador IoT:** Un demonío suscripto al tópico MQTT en el servidor que recibe el payload JSON y ejecuta la orden sobre la API de Docker (`--cpus`).
         """)
+
+    st.markdown("### 📐 Diagrama de Conversión a Arquitectura IoT Propuesta")
+    st.code("""
+    [ Nodo Sensor Edge (Raspberry Pi) ] 
+           |
+           |  1. Publica Telemetría Y(t) (Protocolo MQTT sobre Wi-Fi/LAN)
+           v
+    (( Broker MQTT Central - Tópico: /sensor/ttft ))
+           |
+           v
+    [ Nodo Controlador PID Cloud + Dashboard QoS ] ---> Evalúa Setpoint, QoS, Kp, Ki, Kv
+           |
+           |  2. Publica Acción de Control U(t) (Tópico: /actuador/cpus)
+           v
+    [ Agente Actuador en Servidor ] ---> Modifica Cgroups / Docker API ---> [ Planta: Motor LLM ]
+    """, language="text")
+
+
+# ==============================================================================
+# PÁGINA 3: SEMANA 3 (PENDIENTE PARA LA PRÓXIMA ENTREGA)
+# ==============================================================================
+elif pagina == "🟠 3. Semana 3: Implementación Física (Próximo)":
+    st.title("🟠 Semana 3: Conexión con Contenedor Docker Real y Cierre de Informe")
+    st.info("🚧 **En desarrollo para la entrega final (Semana 3).**")
+
+    st.markdown("""
+    ### Próximos pasos a completar en la última iteración:
+    1. **Vinculación en vivo con el contenedor local (Ollama / FastAPI):** Reemplazar la función de respuesta simulada por las lecturas reales del contenedor Docker corriendo en la máquina del laboratorio.
+    2. **Pruebas de Estrés con Generador de Tráfico Externo:** Capturar las gráficas finales de QoS sometiendo al servidor a ráfagas reales de consultas HTTP concurrentes.
+    3. **Compilación del Informe PDF Final:** Integración del análisis de estabilidad, polos y ceros, y justificación de sintonización de $K_p, K_i$ y $K_v$ según las normas de la cátedra.
+    """)
