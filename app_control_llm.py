@@ -38,7 +38,7 @@ pagina = st.sidebar.radio(
 
 st.sidebar.divider()
 
-# Controles del Tablero (visibles para configurar la simulación)
+# Controles del Tablero
 st.sidebar.subheader("1. Referencia y QoS (SLA)")
 ref_val = st.sidebar.slider("Valor de Referencia / Setpoint (ms)", 100, 500, 200, step=10)
 qos_max = st.sidebar.slider("Umbral Falla QoS / Latencia Máx (ms)", 250, 800, 350, step=10)
@@ -51,7 +51,7 @@ st.sidebar.subheader("3. Constantes de Control (Kp, Ki, Kv)")
 modo_lazo = st.sidebar.selectbox("Modo del Sistema:", ["Lazo Cerrado (Con Corrección)", "Lazo Abierto (Sin Corrección - Se desequilibra)"])
 kp = st.sidebar.slider("Constante Proporcional (Kp)", 0.000, 0.030, 0.008, step=0.001, format="%.3f")
 ki = st.sidebar.slider("Constante Integral (Ki)", 0.000, 0.015, 0.003, step=0.001, format="%.3f")
-kv = st.sidebar.slider("Constante Kv / Derivativa ( velocidad )", 0.000, 0.020, 0.004, step=0.001, format="%.3f")
+kv = st.sidebar.slider("Constante Kv / Derivativa (velocidad)", 0.000, 0.020, 0.004, step=0.001, format="%.3f")
 
 
 # ==============================================================================
@@ -92,42 +92,33 @@ if pagina == "🟢 1. Simulador en Tiempo Real y QoS":
         st.session_state.step += 1
         t = st.session_state.step
 
-        # 1. Evaluar si hay perturbación activa en este instante
         if st.session_state.perturb_remaining > 0:
             z_t = float(pert_amp)
             st.session_state.perturb_remaining -= 1
         else:
             z_t = 0.0
 
-        # 2. Medición actual (Sensor simulado) y cálculo del Error
         y_actual = st.session_state.current_y
         error = ref_val - y_actual
 
-        # 3. Cálculo del Controlador en base a Kp, Ki y Kv
         if modo_lazo == "Lazo Cerrado (Con Corrección)":
             st.session_state.integral_error = np.clip(st.session_state.integral_error + error, -600.0, 600.0)
             velocidad_error = error - st.session_state.prev_error
             
-            # Como +CPU baja la latencia, un error negativo (latencia alta) requiere subir CPU
             accion_control = -(kp * error + ki * st.session_state.integral_error + kv * velocidad_error)
             u_cpu = float(np.clip(2.0 + accion_control, 0.5, 4.0))
             st.session_state.prev_error = error
         else:
-            # En Lazo Abierto la entrada U(t) queda fija y el sistema no corrige
             u_cpu = 2.0
 
-        # 4. Respuesta de la Planta (Modelo de primer orden + impacto de perturbación)
-        # En condiciones normales (CPU=2.0 y sin perturbación), la planta tiende a ref_val
         latencia_objetivo_planta = ref_val * (2.0 / u_cpu) + z_t
         inercia = 0.35
         ruido = np.random.normal(0, 2.5)
         nueva_y = (1 - inercia) * y_actual + inercia * latencia_objetivo_planta + ruido
         st.session_state.current_y = max(30.0, nueva_y)
 
-        # 5. Evaluar QoS (Calidad de Servicio)
         en_falla_qos = st.session_state.current_y > qos_max
 
-        # 6. Guardar todas las señales
         st.session_state.history.append({
             "Tiempo": t,
             "Referencia": ref_val,
@@ -138,11 +129,9 @@ if pagina == "🟢 1. Simulador en Tiempo Real y QoS":
             "Entrada_CPU": round(u_cpu, 2),
             "Falla_QoS": en_falla_qos
         })
-        # Mantener ventana de los últimos 80 segundos en pantalla
         if len(st.session_state.history) > 80:
             st.session_state.history.pop(0)
 
-    # Sembrar 5 puntos iniciales de normalidad si recién se abre la app
     if len(st.session_state.history) == 0:
         st.session_state.current_y = float(ref_val)
         for _ in range(5):
@@ -154,10 +143,7 @@ if pagina == "🟢 1. Simulador en Tiempo Real y QoS":
     k1.metric("Valor Medido Y(t)", f"{ultimo['Valor_Medido']} ms", f"{round(ultimo['Valor_Medido'] - ref_val, 1)} ms vs Ref", delta_color="inverse")
     k2.metric("Perturbación Activa Z(t)", f"+{ultimo['Perturbacion']} ms", f"Restan {st.session_state.perturb_remaining} s" if st.session_state.perturb_remaining > 0 else "Normalidad")
     k3.metric("Entrada Actuador U(t)", f"{ultimo['Entrada_CPU']} CPUs", "Docker --cpus")
-    
-    # cálculo de constantes de error teóricas para mostrar en pantalla
-    k_estatica_lazo = round((kp * 100) + (ki * 200), 2)
-    k4.metric("Constantes Activas", f"Kp:{kp} | Ki:{ki} | Kv:{kv}", f"Ganancia Dinámica: {k_estatica_lazo}")
+    k4.metric("Constantes Activas", f"Kp:{kp} | Ki:{ki} | Kv:{kv}")
 
     if ultimo["Falla_QoS"]:
         k5.error(f"🚨 **FALLA DE QoS (SLA VIOLADO)**\nLatencia > {qos_max} ms")
@@ -180,24 +166,17 @@ if pagina == "🟢 1. Simulador en Tiempo Real y QoS":
         )
     )
 
-    # 1. Salida, Referencia y QoS
     fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Referencia"], name="Valor de Referencia R(t)", line=dict(color="#2ecc71", dash="dash", width=2)), row=1, col=1)
     fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Umbral_QoS"], name="Límite Falla QoS", line=dict(color="#e74c3c", dash="dot", width=2)), row=1, col=1)
     fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Valor_Medido"], name="Valor Medido Y(t)", line=dict(color="#2980b9", width=3), mode="lines+markers"), row=1, col=1)
 
-    # Marcar puntos donde se rompe el QoS en rojo fuerte
     df_fallas = df[df["Falla_QoS"] == True]
     if len(df_fallas) > 0:
         fig.add_trace(go.Scatter(x=df_fallas["Tiempo"], y=df_fallas["Valor_Medido"], name="Falla QoS", mode="markers", marker=dict(color="red", size=10, symbol="x")), row=1, col=1)
 
-    # 2. Perturbación
     fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Perturbacion"], name="Perturbación Z(t)", line=dict(color="#e67e22", width=2.5, shape="hv"), fill="tozeroy"), row=2, col=1)
-
-    # 3. Error
     fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Error"], name="Error E(t)", line=dict(color="#9b59b6", width=2)), row=3, col=1)
     fig.add_hline(y=0, line_dash="dash", line_color="gray", row=3, col=1)
-
-    # 4. Entrada Actuador (CPU)
     fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Entrada_CPU"], name="Entrada Planta U(t)", line=dict(color="#16a085", width=2.5, shape="hv"), fill="tozeroy"), row=4, col=1)
 
     fig.update_layout(height=780, margin=dict(l=20, r=20, t=40, b=20), showlegend=True)
@@ -205,7 +184,6 @@ if pagina == "🟢 1. Simulador en Tiempo Real y QoS":
     
     st.plotly_chart(fig, use_container_width=True)
 
-    # Bucle de refresco automático si está "Corriendo en línea"
     if st.session_state.running:
         time.sleep(0.4)
         avanzar_un_paso()
@@ -213,66 +191,20 @@ if pagina == "🟢 1. Simulador en Tiempo Real y QoS":
 
 
 # ==============================================================================
-# PÁGINA 2: ANÁLISIS DEL MODELO IoT (PREGUNTA DE VICKI / CÁTEDRA)
+# PÁGINA 2: ANÁLISIS DEL MODELO IoT SIMPLIFICADO
 # ==============================================================================
 elif pagina == "🌐 2. Análisis del Modelo IoT":
-    st.title("🌐 Análisis Arquitectónico: ¿Responde el Sistema al Modelo IoT?")
-    st.subheader("Fundamentación Teórica y Propuesta de Incorporación")
-
-    st.warning("""
-    **Respuesta Directa para la Defensa:**  
-    En su estado actual de simulación local (monolítico en una sola PC), el sistema **NO responde estrictamente a un modelo IoT (Internet of Things)** completo, sino a un **sistema de control local cerrado (Loopback / Host-based Control)**. Sin embargo, posee la estructura modular exacta para transformarse en una arquitectura IoT / IIoT incorporando tres capas específicas.
-    """)
-
-    col_iot1, col_iot2 = st.columns(2)
-
-    with col_iot1:
-        st.markdown("""
-        ### 1. ¿Por qué hoy NO es un modelo IoT puro?
-        Para que un sistema de control clasifique dentro del paradigma **IoT (o IIoT - Industrial IoT)** según la cátedra, debe cumplir con:
-        1. **Distribución Física y Sensado Remoto:** Los sensores y actuadores deben ser nodos distribuidos o dispositivos de borde (*Edge Devices*) separados físicamente del cerebro central. Hoy el script de Python y el contenedor conviven en el mismo *localhost*.
-        2. **Protocolos de Telemetría Ligera (M2M):** La transmisión de la Variable Controlada y la Señal de Control en IoT se realiza mediante protocolos orientados a eventos como **MQTT, CoAP o WebSockets**, y no mediante llamadas locales de sistema operativo.
-        3. **Identificación Única y Gestión en la Nube:** Cada nodo sensor/actuador debe tener direccionamiento propio y reportar a un *Broker* o plataforma centralizada de monitoreo.
-        """)
-
-    with col_iot2:
-        st.markdown("""
-        ### 2. ¿Qué hay que incorporar para que SÍ responda al Modelo IoT?
-        Para evolucionar nuestra planta de IA hacia un **Sistema de Control Basado en Red (NCS) bajo arquitectura IoT**, proponemos incorporar:
-        * **A. Separación en Nodos Físicos (Edge + Cloud):** Incorporar una **Raspberry Pi o segunda PC** en la red local que opere como nodo de borde (*Edge Node* / Sondas de medición y generador de tráfico), separada del Servidor donde corre la Planta LLM.
-        * **B. Broker de Mensajería MQTT (Capa de Comunicación IoT):** Incorporar un broker **Mosquitto (MQTT)** entre los bloques del lazo de control:
-          * El **Sensor** publica la telemetría en el tópico `utn/tdc/planta_llm/latencia_ttft`.
-          * El **Controlador PID** (alojado en la nube o en otro nodo) se suscribe a ese tópico, calcula la ley de control en función de $K_p, K_i, K_v$ y publica el comando en `utn/tdc/actuador_docker/cpu_limit`.
-        * **C. Agente Actuador IoT:** Un demonío suscripto al tópico MQTT en el servidor que recibe el payload JSON y ejecuta la orden sobre la API de Docker (`--cpus`).
-        """)
-
-    st.markdown("### 📐 Diagrama de Conversión a Arquitectura IoT Propuesta")
-    st.code("""
-    [ Nodo Sensor Edge (Raspberry Pi) ] 
-           |
-           |  1. Publica Telemetría Y(t) (Protocolo MQTT sobre Wi-Fi/LAN)
-           v
-    (( Broker MQTT Central - Tópico: /sensor/ttft ))
-           |
-           v
-    [ Nodo Controlador PID Cloud + Dashboard QoS ] ---> Evalúa Setpoint, QoS, Kp, Ki, Kv
-           |
-           |  2. Publica Acción de Control U(t) (Tópico: /actuador/cpus)
-           v
-    [ Agente Actuador en Servidor ] ---> Modifica Cgroups / Docker API ---> [ Planta: Motor LLM ]
-    """, language="text")
-
-
-# ==============================================================================
-# PÁGINA 3: SEMANA 3 (PENDIENTE PARA LA PRÓXIMA ENTREGA)
-# ==============================================================================
-elif pagina == "🟠 3. Semana 3: Implementación Física (Próximo)":
-    st.title("🟠 Semana 3: Conexión con Contenedor Docker Real y Cierre de Informe")
-    st.info("🚧 **En desarrollo para la entrega final (Semana 3).**")
+    st.title("🌐 Análisis del Modelo IoT")
+    
+    st.info("**Estado Actual:** En su configuración local dentro de una sola PC, el sistema opera como un lazo cerrado local y **no responde todavía al modelo IoT**.")
 
     st.markdown("""
-    ### Próximos pasos a completar en la última iteración:
-    1. **Vinculación en vivo con el contenedor local (Ollama / FastAPI):** Reemplazar la función de respuesta simulada por las lecturas reales del contenedor Docker corriendo en la máquina del laboratorio.
-    2. **Pruebas de Estrés con Generador de Tráfico Externo:** Capturar las gráficas finales de QoS sometiendo al servidor a ráfagas reales de consultas HTTP concurrentes.
-    3. **Compilación del Informe PDF Final:** Integración del análisis de estabilidad, polos y ceros, y justificación de sintonización de $K_p, K_i$ y $K_v$ según las normas de la cátedra.
+    ### ¿Qué hay que incorporar para que SÍ responda al Modelo IoT?
+    Para evolucionar nuestra planta de IA hacia un **Sistema de Control Basado en Red (NCS)** bajo arquitectura **IoT**, proponemos incorporar:
+
+    * **A. Separación en Nodos Físicos (Edge + Cloud):** Incorporar una **Raspberry Pi o segunda PC** en la red local que opere como nodo de borde (*Edge Node* / Sondas de medición y generador de tráfico), separada del Servidor donde corre la Planta LLM.
+    * **B. Broker de Mensajería MQTT (Capa de Comunicación IoT):** Incorporar un broker **Mosquitto (MQTT)** entre los bloques del lazo de control:
+      * El **Sensor** publica la telemetría en el tópico `utn/tdc/planta_llm/latencia_ttft`.
+      * El **Controlador PID** (alojado en la nube o en otro nodo) se suscribe a ese tópico, calcula la ley de control en función de $K_p, K_i, K_v$ y publica el comando en `utn/tdc/actuador_docker/cpu_limit`.
+    * **C. Agente Actuador IoT:** Un demonio suscripto al tópico MQTT en el servidor que recibe el payload JSON y ejecuta la orden sobre la API de Docker (`--cpus`).
     """)
