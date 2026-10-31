@@ -202,8 +202,8 @@ elif pagina == "🌐 2. Análisis del Modelo IoT":
     Para evolucionar nuestra planta de IA hacia un **Sistema de Control Basado en Red (NCS)** bajo arquitectura **IoT**, proponemos incorporar:
 
     * **A. Separación en Nodos Físicos (Edge + Cloud):** Incorporar una **Raspberry Pi o segunda PC** en la red local que opere como nodo de borde (*Edge Node* / Sondas de medición y generador de tráfico), separada del Servidor donde corre la Planta LLM.
-    * **B. Broker de Mensajería MQTT (Capa de Comunicación IoT):** Incorporar un broker **Mosquitto (MQTT)** entre los bloques del lazo de control:
+    * **B. Broker de Mensajería MQTT (Capa de Comunicación IoT):** Incorporar un broker **(MQTT)** entre los bloques del lazo de control:
       * El **Sensor** publica la telemetría en el tópico `utn/tdc/planta_llm/latencia_ttft`.
       * El **Controlador PID** (alojado en la nube o en otro nodo) se suscribe a ese tópico, calcula la ley de control en función de $K_p, K_i, K_v$ y publica el comando en `utn/tdc/actuador_docker/cpu_limit`.
-    * **C. Agente Actuador IoT:** Un demonio suscripto al tópico MQTT en el servidor que recibe el payload JSON y ejecuta la orden sobre la API de Docker (`--cpus`).
+    * **C. Agente Actuador IoT:** Suscripto al tópico MQTT en el servidor que recibe el payload JSON y ejecuta la orden sobre la API de Docker (`--cpus`).
     """)
