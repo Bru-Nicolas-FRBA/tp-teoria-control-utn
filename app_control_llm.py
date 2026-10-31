@@ -57,7 +57,7 @@ kv = st.sidebar.slider("Constante Kv / Derivativa (velocidad)", 0.000, 0.020, 0.
 # PÁGINA 1: SIMULACIÓN EN TIEMPO REAL, SEÑALES APILADAS Y QoS
 # ==============================================================================
 if pagina == "🟢 1. Simulador en Tiempo Real y QoS":
-    st.title("🟢 Simulación en Tiempo Real del Sistema de Control y QoS")
+    st.title("🟢 Simulación de tiempo de respuesta de LLM, control de CPUs usados y perturbaciones")
     st.markdown("""
     El sistema inicia en **condiciones de normalidad** siguiendo el Valor de Referencia. 
     En cualquier momento puedes **inyectar una perturbación** para observar cómo se desequilibra, cuándo cruza el umbral de **Falla de QoS** y cómo corrige según los valores de **$K_p, K_i$ y $K_v$**.
