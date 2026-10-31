@@ -32,7 +32,6 @@ pagina = st.sidebar.radio(
     [
         "🟢 1. Simulador en Tiempo Real y QoS",
         "🌐 2. Análisis del Modelo IoT",
-        "🟠 3. Semana 3: Implementación Física (Próximo)"
     ]
 )
 
