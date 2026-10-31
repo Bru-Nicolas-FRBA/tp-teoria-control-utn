@@ -8,7 +8,6 @@ st.set_page_config(page_title="TP Teoría de Control - UTN", layout="wide")
 
 # --- MENÚ LATERAL PARA NAVEGAR LA EVOLUCIÓN DEL TP ---
 st.sidebar.title("📂 Evolución del TP")
-st.sidebar.markdown("**Autores:** Boldrini Lucas y Bru Nicolás\n\n**Cátedra:** Teoría de Control - UTN")
 pagina = st.sidebar.radio(
     "Seleccionar Entrega / Avance:",
     [
@@ -23,8 +22,7 @@ pagina = st.sidebar.radio(
 # ==============================================================================
 if pagina == "🟢 Semana 1: Instrumentación y Lazo Abierto":
     st.title("🟢 Avance 1: Planta de Inferencia LLM en Lazo Abierto")
-    st.subheader("Teoría de Control - UTN | Boldrini Lucas y Bru Nicolás")
-
+   
     st.markdown("""
     **Objetivo (Fases 1 y 2):** 
     Verificar en **Lazo Abierto** cómo responde nuestra **Variable Controlada** (Latencia en ms) 
@@ -77,8 +75,7 @@ if pagina == "🟢 Semana 1: Instrumentación y Lazo Abierto":
 # ==============================================================================
 elif pagina == "🟡 Semana 2: Identificación (Ensayo Escalón)":
     st.title("🟡 Avance 2: Identificación del Sistema (Ensayo de Entrada Escalón)")
-    st.subheader("Teoría de Control - UTN | Boldrini Lucas y Bru Nicolás")
-
+    
     st.markdown("""
     **Objetivo (Fase 3 - Modelado de Caja Negra):** 
     Aplicar automáticamente una **Entrada Escalón** reduciendo de golpe el límite de CPU del **100% (2.0 Cores) al 50% (1.0 Core)** en $t = 5\\text{ s}$ mientras se inyectan peticiones constantes. 
@@ -185,8 +182,7 @@ elif pagina == "🟡 Semana 2: Identificación (Ensayo Escalón)":
 # ==============================================================================
 elif pagina == "🟠 Semana 3: Diseño PID y Lazo Cerrado (Próximo)":
     st.title("🟠 Avance 3 (Próxima Etapa): Controlador PID Discreto y Cierre de Lazo")
-    st.subheader("Teoría de Control - UTN | Boldrini Lucas y Bru Nicolás")
-
+   
     st.info("🚧 **Estado:** En desarrollo para la próxima iteración (Fases 4 y 5 del Plan de Acción).")
 
     st.markdown("""
