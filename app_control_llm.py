@@ -25,7 +25,11 @@ if "history" not in st.session_state:
 
 # --- BARRA LATERAL: NAVEGACIÓN Y TABLERO DE CONTROL ---
 st.sidebar.title("🎛️ Tablero de Control")
-st.sidebar.markdown("**Autores:** Boldrini Lucas y Bru Nicolás\n\n**Cátedra:** Teoría de Control - UTN")
+st.sidebar.markdown(
+    "**Proyecto:** Control de Lazo Cerrado para Latencia en Inferencia LLM\n\n"
+    "**Autores:** Boldrini Lucas y Bru Nicolás\n\n"
+    "**Cátedra:** Teoría de Control - UTN"
+)
 
 pagina = st.sidebar.radio(
     "Navegación del Proyecto:",
@@ -39,28 +43,52 @@ st.sidebar.divider()
 
 # Controles del Tablero
 st.sidebar.subheader("1. Referencia y QoS (SLA)")
-ref_val = st.sidebar.slider("Valor de Referencia / Setpoint (ms)", 100, 500, 200, step=10)
+ref_val = st.sidebar.slider("Valor de Referencia R(t) / Setpoint (ms)", 100, 500, 200, step=10)
 qos_max = st.sidebar.slider("Umbral Falla QoS / Latencia Máx (ms)", 250, 800, 350, step=10)
 
-st.sidebar.subheader("2. Configurar Perturbación")
+st.sidebar.subheader("2. Configurar Perturbación Z(t)")
 pert_amp = st.sidebar.slider("Amplitud de Perturbación (+ms carga)", 50, 400, 180, step=10)
 pert_dur = st.sidebar.slider("Duración de Perturbación (ciclos)", 3, 30, 10, step=1)
 
 st.sidebar.subheader("3. Constantes de Control (Kp, Ki, Kv)")
-modo_lazo = st.sidebar.selectbox("Modo del Sistema:", ["Lazo Cerrado (Con Corrección)", "Lazo Abierto (Sin Corrección - Se desequilibra)"])
-kp = st.sidebar.slider("Constante Proporcional (Kp)", 0.000, 0.030, 0.008, step=0.001, format="%.3f")
-ki = st.sidebar.slider("Constante Integral (Ki)", 0.000, 0.015, 0.003, step=0.001, format="%.3f")
-kv = st.sidebar.slider("Constante Kv / Derivativa (velocidad)", 0.000, 0.020, 0.004, step=0.001, format="%.3f")
+modo_lazo = st.sidebar.selectbox(
+    "Modo del Sistema:",
+    ["Lazo Cerrado (Con Corrección)", "Lazo Abierto (Sin Corrección - Se desequilibra)"]
+)
+
+perfil_k = st.sidebar.selectbox(
+    "Caso de Prueba (Corrección por K):",
+    [
+        "Personalizado (Usar sliders)",
+        "Solo Kp (Proporcional - Queda error estable)",
+        "Kp + Ki (Elimina error en estado estable)",
+        "PID Completo (Kp + Ki + Kv amortiguado)"
+    ]
+)
+
+if perfil_k == "Solo Kp (Proporcional - Queda error estable)":
+    kp, ki, kv = 0.012, 0.000, 0.000
+    st.sidebar.caption("🔒 Activo: Kp=0.012 | Ki=0.000 | Kv=0.000")
+elif perfil_k == "Kp + Ki (Elimina error en estado estable)":
+    kp, ki, kv = 0.008, 0.004, 0.000
+    st.sidebar.caption("🔒 Activo: Kp=0.008 | Ki=0.004 | Kv=0.000")
+elif perfil_k == "PID Completo (Kp + Ki + Kv amortiguado)":
+    kp, ki, kv = 0.008, 0.003, 0.006
+    st.sidebar.caption("🔒 Activo: Kp=0.008 | Ki=0.003 | Kv=0.006")
+else:
+    kp = st.sidebar.slider("Constante Proporcional (Kp)", 0.000, 0.030, 0.008, step=0.001, format="%.3f")
+    ki = st.sidebar.slider("Constante Integral (Ki)", 0.000, 0.015, 0.003, step=0.001, format="%.3f")
+    kv = st.sidebar.slider("Constante Kv / Derivativa (velocidad)", 0.000, 0.020, 0.004, step=0.001, format="%.3f")
 
 
 # ==============================================================================
-# PÁGINA 1: SIMULACIÓN EN TIEMPO REAL, SEÑALES APILADAS Y QoS
+# PÁGINA 1: SIMULACIÓN EN TIEMPO REAL, SEÑALES INDEPENDIENTES Y QoS
 # ==============================================================================
 if pagina == "🟢 1. Simulador en Tiempo Real y QoS":
-    st.title("🟢 Simulación de tiempo de respuesta de LLM, control de CPUs usados y perturbaciones")
+    st.title("🟢 Sistema de Control de Lazo Cerrado para Regulación de Latencia en Servidores LLM")
     st.markdown("""
-    El sistema inicia en **condiciones de normalidad** siguiendo el Valor de Referencia. 
-    En cualquier momento puedes **inyectar una perturbación** para observar cómo se desequilibra, cuándo cruza el umbral de **Falla de QoS** y cómo corrige según los valores de **$K_p, K_i$ y $K_v$**.
+    **Variable Controlada (VC):** Latencia de inferencia / TTFT (ms) | **Variable Manipulada (VM):** Cuota de CPU en Docker (`--cpus`).  
+    Cada señal del lazo se grafica de forma **independiente** para observar cómo responde el sistema ante perturbaciones y cómo aporta cada constante (**$K_p, K_i, K_v$**) a la corrección.
     """)
 
     # --- BOTONERA DE EJECUCIÓN EN LÍNEA ---
@@ -103,11 +131,17 @@ if pagina == "🟢 1. Simulador en Tiempo Real y QoS":
         if modo_lazo == "Lazo Cerrado (Con Corrección)":
             st.session_state.integral_error = np.clip(st.session_state.integral_error + error, -600.0, 600.0)
             velocidad_error = error - st.session_state.prev_error
-            
-            accion_control = -(kp * error + ki * st.session_state.integral_error + kv * velocidad_error)
+
+            # Desglose de cada acción de control (signo invertido porque +CPU baja la latencia)
+            p_term = -(kp * error)
+            i_term = -(ki * st.session_state.integral_error)
+            d_term = -(kv * velocidad_error)
+
+            accion_control = p_term + i_term + d_term
             u_cpu = float(np.clip(2.0 + accion_control, 0.5, 4.0))
             st.session_state.prev_error = error
         else:
+            p_term, i_term, d_term = 0.0, 0.0, 0.0
             u_cpu = 2.0
 
         latencia_objetivo_planta = ref_val * (2.0 / u_cpu) + z_t
@@ -122,10 +156,13 @@ if pagina == "🟢 1. Simulador en Tiempo Real y QoS":
             "Tiempo": t,
             "Referencia": ref_val,
             "Umbral_QoS": qos_max,
-            "Valor_Medido": round(st.session_state.current_y, 1),
+            "Retroalimentacion": round(st.session_state.current_y, 1),
             "Perturbacion": z_t,
             "Error": round(error, 1),
-            "Entrada_CPU": round(u_cpu, 2),
+            "Salida_Controlador": round(u_cpu, 2),
+            "Accion_P": round(p_term, 3),
+            "Accion_I": round(i_term, 3),
+            "Accion_D": round(d_term, 3),
             "Falla_QoS": en_falla_qos
         })
         if len(st.session_state.history) > 80:
@@ -139,9 +176,9 @@ if pagina == "🟢 1. Simulador en Tiempo Real y QoS":
     # --- INDICADORES SUPERIORES DE ESTADO Y QoS ---
     ultimo = st.session_state.history[-1]
     k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric("Valor Medido Y(t)", f"{ultimo['Valor_Medido']} ms", f"{round(ultimo['Valor_Medido'] - ref_val, 1)} ms vs Ref", delta_color="inverse")
-    k2.metric("Perturbación Activa Z(t)", f"+{ultimo['Perturbacion']} ms", f"Restan {st.session_state.perturb_remaining} s" if st.session_state.perturb_remaining > 0 else "Normalidad")
-    k3.metric("Entrada Actuador U(t)", f"{ultimo['Entrada_CPU']} CPUs", "Docker --cpus")
+    k1.metric("Retroalimentación Ym(t)", f"{ultimo['Retroalimentacion']} ms", f"{round(ultimo['Retroalimentacion'] - ref_val, 1)} ms vs Ref", delta_color="inverse")
+    k2.metric("Perturbación Z(t)", f"+{ultimo['Perturbacion']} ms", f"Restan {st.session_state.perturb_remaining} s" if st.session_state.perturb_remaining > 0 else "Normalidad")
+    k3.metric("Salida Controlador U(t)", f"{ultimo['Salida_Controlador']} CPUs", "Docker --cpus")
     k4.metric("Constantes Activas", f"Kp:{kp} | Ki:{ki} | Kv:{kv}")
 
     if ultimo["Falla_QoS"]:
@@ -151,36 +188,51 @@ if pagina == "🟢 1. Simulador en Tiempo Real y QoS":
     else:
         k5.success("✅ **QoS NORMAL (OK)**\nSistema en Equilibrio")
 
-    # --- TODAS LAS SEÑALES DEL SISTEMA (UNA DEBAJO DE LA OTRA) ---
+    # --- SEÑALES INDEPENDIENTES DEL SISTEMA DE CONTROL ---
     df = pd.DataFrame(st.session_state.history)
 
     fig = make_subplots(
-        rows=4, cols=1, shared_xaxes=True,
-        vertical_spacing=0.06,
+        rows=6, cols=1, shared_xaxes=True,
+        vertical_spacing=0.045,
         subplot_titles=(
-            "1. Salida Medida Y(t), Valor de Referencia R(t) y Límite de Falla QoS (ms)",
-            "2. Señal de Perturbación Z(t) - Sobrecarga Inyectada (ms)",
-            "3. Señal de Error E(t) = Referencia - Valor Medido (ms)",
-            "4. Señal de Entrada a la Planta / Actuador U(t) - CPUs Asignadas (Cores)"
+            "1. Valor de Referencia R(t) - Setpoint (ms)",
+            "2. Señal de Retroalimentación / Variable Controlada Ym(t) y Umbral QoS (ms)",
+            "3. Señal de Error E(t) = R(t) - Ym(t) (ms)",
+            "4. Salida del Controlador / Actuador U(t) - CPUs Asignadas (Cores)",
+            "5. Desglose de Corrección por Constante (Aporte de Kp, Ki y Kv en CPUs)",
+            "6. Señal de Perturbación Z(t) - Sobrecarga Inyectada (ms)"
         )
     )
 
-    fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Referencia"], name="Valor de Referencia R(t)", line=dict(color="#2ecc71", dash="dash", width=2)), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Umbral_QoS"], name="Límite Falla QoS", line=dict(color="#e74c3c", dash="dot", width=2)), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Valor_Medido"], name="Valor Medido Y(t)", line=dict(color="#2980b9", width=3), mode="lines+markers"), row=1, col=1)
+    # 1. Valor de Referencia independiente
+    fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Referencia"], name="Referencia R(t)", line=dict(color="#2ecc71", width=2.5, shape="hv")), row=1, col=1)
 
+    # 2. Señal de Retroalimentación (Sensor) + límite QoS
+    fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Retroalimentacion"], name="Retroalimentación Ym(t)", line=dict(color="#2980b9", width=3), mode="lines+markers"), row=2, col=1)
+    fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Umbral_QoS"], name="Límite Falla QoS", line=dict(color="#e74c3c", dash="dot", width=2)), row=2, col=1)
     df_fallas = df[df["Falla_QoS"] == True]
     if len(df_fallas) > 0:
-        fig.add_trace(go.Scatter(x=df_fallas["Tiempo"], y=df_fallas["Valor_Medido"], name="Falla QoS", mode="markers", marker=dict(color="red", size=10, symbol="x")), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df_fallas["Tiempo"], y=df_fallas["Retroalimentacion"], name="Falla QoS", mode="markers", marker=dict(color="red", size=10, symbol="x")), row=2, col=1)
 
-    fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Perturbacion"], name="Perturbación Z(t)", line=dict(color="#e67e22", width=2.5, shape="hv"), fill="tozeroy"), row=2, col=1)
+    # 3. Señal de Error
     fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Error"], name="Error E(t)", line=dict(color="#9b59b6", width=2)), row=3, col=1)
     fig.add_hline(y=0, line_dash="dash", line_color="gray", row=3, col=1)
-    fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Entrada_CPU"], name="Entrada Planta U(t)", line=dict(color="#16a085", width=2.5, shape="hv"), fill="tozeroy"), row=4, col=1)
 
-    fig.update_layout(height=780, margin=dict(l=20, r=20, t=40, b=20), showlegend=True)
-    fig.update_xaxes(title_text="Tiempo en línea (ciclos)", row=4, col=1)
-    
+    # 4. Salida del Controlador (CPUs totales)
+    fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Salida_Controlador"], name="Salida Controlador U(t)", line=dict(color="#16a085", width=2.5, shape="hv"), fill="tozeroy"), row=4, col=1)
+
+    # 5. Desglose de corrección por cada K
+    fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Accion_P"], name="Corrección Kp (P)", line=dict(color="#3498db", width=2)), row=5, col=1)
+    fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Accion_I"], name="Corrección Ki (I)", line=dict(color="#f39c12", width=2)), row=5, col=1)
+    fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Accion_D"], name="Corrección Kv (D)", line=dict(color="#e74c3c", width=1.5, dash="dot")), row=5, col=1)
+    fig.add_hline(y=0, line_dash="dash", line_color="gray", row=5, col=1)
+
+    # 6. Perturbación independiente
+    fig.add_trace(go.Scatter(x=df["Tiempo"], y=df["Perturbacion"], name="Perturbación Z(t)", line=dict(color="#e67e22", width=2.5, shape="hv"), fill="tozeroy"), row=6, col=1)
+
+    fig.update_layout(height=1050, margin=dict(l=20, r=20, t=40, b=20), showlegend=True)
+    fig.update_xaxes(title_text="Tiempo en línea (ciclos)", row=6, col=1)
+
     st.plotly_chart(fig, use_container_width=True)
 
     if st.session_state.running:
